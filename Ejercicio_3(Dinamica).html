@@ -1,6 +1,13 @@
 <!DOCTYPE html>
 <html lang="es">
 
+    <!-- ================================================================
+     SISTEMA DE POLEAS — Simulador de Máquina de Atwood Compuesta
+     ----------------------------------------------------------------
+     Física:  Ligaduras dobles, poleas ideales (sin masa, sin fricción)
+     Cuerdas: Tangentes reales calculadas geométricamente sobre los aros
+     ================================================================ -->
+    
     <head>
         <meta charset="UTF-8">
         <title>Sistema de Poleas — Simulador</title>
@@ -300,8 +307,6 @@
                 </div>
             </div>
 
-
-
         </div>
 
         <div class="main-area">
@@ -409,13 +414,14 @@
                 // Todas las distancias en PIXELES para ser consistentes con drawScene
                 const ropeLen1 = H * ROPE1_F;   // px: seg inicial PF -> m1
                 const ropeLenP = H * ROPEP_F;   // px: seg inicial PF -> polea movil
-                const L2_vis   = (L2 || 4.0) * SCALE;
+                // Longitudes L2 en px (fijas al layout)
+                const L2_vis   = 2 * M2OFF;
                 const halfL2   = L2_vis / 2;
+                const minL2    = PR + MH / 2 + 4;
 
                 // Margenes minimos (en px) para que el bloque no tape el aro
-                const minSeg1  = PR + MH / 2;        // PF -> m1
-                const minSegP  = PR + 10;             // PF -> polea movil
-                const minSegL2 = PR + MH / 2 + 4;    // PM -> m2 o m3
+                const minSeg1  = PR + MH / 2;
+                const minSegP  = PR + 10;
 
                 // t para recorrer delta px con aceleracion a (px/s^2)
                 const tFor = (delta, a) =>
@@ -423,27 +429,43 @@
                         ? Math.sqrt(2 * delta / Math.abs(a))
                         : Infinity;
 
-                let tStop = Infinity;
-                phys.stopMsg = '';
+                phys.stopMsg  = '';
+                phys.stopMsg2 = '';
 
-                // -- Cuerda L1 --
-                const a1px = p.a1 * SCALE;  // aceleracion en px/s^2
+                // -- Cuerda L1: evento de la polea fija --
+                const a1px = p.a1 * SCALE;
+                let tStopL1 = Infinity;
 
                 if (p.a1 < -1e-6) {
-                    // m1 sube -> left_seg se reduce -> m1 llega a la polea fija
                     const tt = tFor(ropeLen1 - minSeg1, a1px);
-                    if (tt < tStop) { tStop = tt; phys.stopMsg = 'm₃ llega a la polea fija'; }
+                    if (tt < tStopL1) { tStopL1 = tt; phys.stopMsg = 'm₃ llega a la polea fija'; }
                 }
                 if (p.a1 > 1e-6) {
-                    // polea movil sube -> right_seg se reduce -> PM llega a la polea fija
                     const tt = tFor(ropeLenP - minSegP, a1px);
-                    if (tt < tStop) { tStop = tt; phys.stopMsg = 'Polea móvil llega a la polea fija'; }
+                    if (tt < tStopL1) { tStopL1 = tt; phys.stopMsg = 'Polea móvil llega a la polea fija'; }
                 }
 
-                // L2 no detiene la animacion: m2/m3 se mueven libremente
-                // hasta que m1 o la polea movil alcancen la polea fija.
+                // -- Cuerda L2: evento de la polea movil --
+                const a2px = p.a2rel * SCALE;
+                let tStopL2 = Infinity;
 
-                return isFinite(tStop) ? tStop : 999;
+                if (p.a2rel < -1e-6) {
+                    const tt = tFor(halfL2 - minL2, a2px);
+                    if (tt < tStopL2) { tStopL2 = tt; phys.stopMsg2 = 'm₁ llega a la polea móvil'; }
+                }
+                if (p.a2rel > 1e-6) {
+                    const tt = tFor(halfL2 - minL2, a2px);
+                    if (tt < tStopL2) { tStopL2 = tt; phys.stopMsg2 = 'm₂ llega a la polea móvil'; }
+                }
+
+                // Guardar tiempos individuales para escalar en drawScene
+                phys.tStopL1 = isFinite(tStopL1) && tStopL1 > 0 ? tStopL1 : 0;
+                phys.tStopL2 = isFinite(tStopL2) && tStopL2 > 0 ? tStopL2 : 0;
+
+                // Parar cuando ambos hayan terminado
+                const tStop = Math.max(phys.tStopL1, phys.tStopL2);
+
+                return tStop > 0 ? tStop : 999;
             }
 
             /* ============================================================
@@ -525,7 +547,8 @@
                     phys.stopped = true;
                     running      = false;
                     document.getElementById('tval').textContent = t.toFixed(2) + ' s';
-                    const msg = phys.stopMsg || 'Límite alcanzado';
+                    const parts = [phys.stopMsg, phys.stopMsg2].filter(Boolean);
+                    const msg = parts.join(' + ') || 'Límite alcanzado';
                     document.getElementById('estado-text').innerHTML =
                         `<span style="color:var(--m2c);font-weight:700">⛔ ${msg} — DETENIDO</span>`;
                     drawScene(t);
@@ -789,7 +812,10 @@
                 //   left_seg + right_seg = constante = L1_visual
                 //   Si m₁ baja Δ  →  left_seg  += Δ, right_seg -= Δ
                 const L1_visual  = ropeLen1 + ropeLenP;
-                const disp1      = 0.5 * p.a1 * time * time * SCALE;
+                // Escalar tiempo de cada cuerda para que ambas terminen juntas
+                const tL1   = (p.tStopL1 > 0 && p.tStop > 0)
+                              ? time * (p.tStopL1 / p.tStop) : time;
+                const disp1 = 0.5 * p.a1 * tL1 * tL1 * SCALE;
                 const left_seg   = ropeLen1 + disp1;
                 const right_seg  = L1_visual - left_seg;
 
@@ -802,7 +828,9 @@
                 // L2: conservacion de longitud para m2 y m3
                 const L2_visual = (p.L2 || 4.0) * SCALE;
                 const halfL2    = L2_visual / 2;
-                const disp_rel  = 0.5 * p.a2rel * time * time * SCALE;
+                const tL2      = (p.tStopL2 > 0 && p.tStop > 0)
+                              ? time * (p.tStopL2 / p.tStop) : time;
+                const disp_rel = 0.5 * p.a2rel * tL2 * tL2 * SCALE;
 
                 // m2 y m3 pueden subir hasta tocar el aro de la polea movil
                 const minL2 = PR + MH / 2 + 4;
